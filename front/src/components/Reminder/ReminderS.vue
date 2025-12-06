@@ -15,17 +15,56 @@
 
     <div class="content">
       <section class="left">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-          <label class="label" style="margin-bottom: 0;">提醒文字 (支持插入图标)</label>
+        <!-- [新增] 播放器控制区 -->
+        <div class="player-control-panel">
+          <div class="player-header">
+            <span class="label">流程播放器</span>
+            <div class="time-display">
+              {{ formatTime(player.currentTime) }} / {{ formatTime(player.maxTime) }}
+            </div>
+          </div>
+          
+          <div class="player-controls">
+            <button class="btn-icon" @click="togglePlay" :title="player.isPlaying ? '暂停' : '播放'">
+              {{ player.isPlaying ? '⏸' : '▶️' }}
+            </button>
+            <button class="btn-icon" @click="stopPlay" title="停止">⏹</button>
+            <input 
+              type="range" 
+              class="range progress-slider" 
+              min="0" 
+              :max="player.maxTime" 
+              step="1"
+              v-model.number="player.currentTime"
+              @input="onSeek"
+            />
+          </div>
+          
+          <div class="player-settings grid-2">
+            <div>
+              <label class="sub-label">显示范围 (秒)</label>
+              <input type="number" v-model.number="player.windowSize" class="input-sm" />
+            </div>
+            <div style="display:flex; align-items:center">
+              <label class="checkbox-label">
+                <input type="checkbox" v-model="player.enabled"> 启用播放模式
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; margin-top: 15px;">
+          <label class="label" style="margin-bottom: 0;">提醒文字 (支持 mm:ss 时间戳)</label>
           <!-- [新增] 图标管理按钮 -->
           <button class="btn-xs" @click="openIconModal">📂 管理/插入图标</button>
         </div>
+        
         <textarea
           ref="textareaRef"
           v-model="state.text"
           class="textarea"
-          rows="5"
-          placeholder="在这里输入提醒文字…&#10;例如：12:00 [icon1] 出动。"
+          rows="10"
+          placeholder="支持时间戳格式：&#10;0:00 [SCV] 开局&#10;0:12 [SCV] 第一个房子&#10;0:45 [Reaper] 死神侦查&#10;..."
           @blur="updateCursorPos"
           @click="updateCursorPos"
           @keyup="updateCursorPos"
@@ -98,7 +137,9 @@
             </select>
           </div>
         </div>
-<!-- 
+
+        <!-- [恢复] 原有注释代码 -->
+        <!-- 
         <div class="grid-3" style="margin-top: 12px;">
           <div>
             <label class="label">窗口宽度（px）</label>
@@ -162,17 +203,18 @@
           <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> 复制当前文字；
           <code>`</code>（全局）重置即将闪烁的时间。
         </div> -->
-
+        
           <div style="margin-top: 20px; font-size: 12px; color: #666; line-height: 1.5;">
             提示：<br/>
             1. 只有点击上方 <b>"解锁位置"</b> 后，悬浮窗才可以被鼠标选中并拖动。<br/>
-            2. 锁定后，鼠标会穿透悬浮窗（点击穿透），不影响你操作背后的内容。<br/>
-            3. 使用 <code>[标签名]</code> 插入图标，标签名在弹窗中可修改。
+            2. 勾选 <b>"启用播放模式"</b> 后，悬浮窗将变为动态播放器样式。<br/>
+            3. 只有当前时间前后 {{ player.windowSize }} 秒内的行会被显示。<br/>
+            4. 使用 <code>[标签名]</code> 插入图标，标签名在弹窗中可修改。
          </div>
       </section>
 
       <section class="right">
-        <div class="preview-title">预览</div>
+        <div class="preview-title">预览 (所见即所得)</div>
         <div class="preview">
           <!-- [修改] 改用 v-html 渲染图片 -->
           <div class="banner" :style="bannerStyle" v-html="parsedHtmlText"></div>
@@ -226,31 +268,32 @@ import { register as registerShortcut, unregisterAll } from '@tauri-apps/plugin-
 const BANNER_LABEL = 'screen-banner'
 let bannerWin: WebviewWindow | null = null
 
-// ---------------- [新增] 自定义图标逻辑 ----------------
-interface UserIcon { name: string; src: string; }
-const showIconModal = ref(false)
-const userIcons = ref<UserIcon[]>([])
-const fileInputRef = ref<HTMLInputElement | null>(null)
-const textareaRef = ref<HTMLTextAreaElement | null>(null) // [新增]
-const cursorPosition = ref(0) // [新增]
+// ---------------- 1. 工具函数 & 常量 (前置定义，防止 ReferenceError) ----------------
+const shadowMap: Record<string, string> = {
+  none: 'none',
+  sm: '0 1px 2px rgba(0,0,0,.25)',
+  md: '0 6px 16px rgba(0,0,0,.35)',
+  lg: '0 14px 28px rgba(0,0,0,.45)'
+}
 
-function openIconModal() { showIconModal.value = true }
-function triggerFileUpload() { fileInputRef.value?.click() }
+function hexToRgba(hex: string, a: number) {
+  const m = hex.replace('#','')
+  const full = m.length === 3 ? m.split('').map(ch => ch + ch).join('') : m
+  const bigint = parseInt(full, 16)
+  const r = (bigint >> 16) & 255
+  const g = (bigint >> 8) & 255
+  const b = bigint & 255
+  return `rgba(${r}, ${g}, ${b}, ${a})`
+}
 
-async function handleFileUpload(event: Event) {
-  const target = event.target as HTMLInputElement
-  const files = target.files
-  if (!files || files.length === 0) return
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i]
-    let safeName = file.name.split('.')[0].toLowerCase().replace(/\s+/g, '_')
-    let counter = 1; let tempName = safeName
-    while (userIcons.value.some(icon => icon.name === tempName)) { tempName = `${safeName}_${counter}`; counter++ }
-    const base64 = await toBase64(file)
-    userIcons.value.push({ name: tempName, src: base64 as string })
-  }
-  saveIconsToStorage()
-  target.value = ''
+function formatTime(seconds: number) {
+  const m = Math.floor(seconds / 60)
+  const s = Math.floor(seconds % 60)
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+function escapeHtml(text: string) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;")
 }
 
 function toBase64(file: File) {
@@ -262,52 +305,30 @@ function toBase64(file: File) {
   })
 }
 
-function deleteIcon(index: number) {
-  if (confirm('确定删除?')) { userIcons.value.splice(index, 1); saveIconsToStorage() }
-}
-
+const STORE_KEY = 'screen-reminder-v1'
 const ICONS_STORE_KEY = 'user-custom-icons'
-function saveIconsToStorage() {
-  try { localStorage.setItem(ICONS_STORE_KEY, JSON.stringify(userIcons.value)) } catch (e) { alert('存储空间不足'); }
-}
-function loadIconsFromStorage() {
-  const raw = localStorage.getItem(ICONS_STORE_KEY)
-  if (raw) { try { userIcons.value = JSON.parse(raw) } catch (e) { console.error(e) } }
-}
 
-function updateCursorPos() {
-  if (textareaRef.value) cursorPosition.value = textareaRef.value.selectionStart
-}
+// ---------------- 2. 状态定义 ----------------
 
-function insertIcon(tagName: string) {
-  const insertText = `[${tagName}]`
-  const originalText = state.text || ''
-  const p = cursorPosition.value
-  state.text = originalText.slice(0, p) + insertText + originalText.slice(p)
-  cursorPosition.value += insertText.length
-  showIconModal.value = false
-  setTimeout(() => { textareaRef.value?.focus(); textareaRef.value?.setSelectionRange(cursorPosition.value, cursorPosition.value) }, 100)
-}
-
-function escapeHtml(text: string) {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;")
-}
-
-// [新增] HTML 解析 computed
-const parsedHtmlText = computed(() => {
-  if (!state.text) return '示例提示文字'
-  const safeText = escapeHtml(state.text)
-  return safeText.replace(/\[([a-zA-Z0-9_\-\u4e00-\u9fa5\s]+)\]/g, (match, key) => {
-    const cleanKey = key.trim()
-    const icon = userIcons.value.find(i => i.name === cleanKey)
-    if (icon) {
-      return `<img src="${icon.src}" style="height: 1.2em; vertical-align: text-bottom; margin: 0 1px;" alt="${cleanKey}"/>`
-    }
-    return match
-  })
+// [新增] 播放器状态
+const player = reactive({
+  enabled: false,     // 是否开启播放器模式
+  isPlaying: false,   // 正在播放
+  currentTime: 0,     // 当前时间(秒)
+  maxTime: 600,       // 最大时间(根据文本自动计算)
+  windowSize: 5,      // 显示窗口大小 (+/- 5秒)
+  timer: null as ReturnType<typeof setInterval> | null
 })
 
-// ---------------- 状态 (保持原有) ----------------
+// [新增] 自定义图标状态
+interface UserIcon { name: string; src: string; }
+const showIconModal = ref(false)
+const userIcons = ref<UserIcon[]>([])
+const fileInputRef = ref<HTMLInputElement | null>(null)
+const textareaRef = ref<HTMLTextAreaElement | null>(null)
+const cursorPosition = ref(0)
+
+// 主状态 (保持原有)
 const state = reactive({
   text: '',
   show: false,
@@ -342,6 +363,70 @@ const state = reactive({
   },
 })
 
+// ---------------- 3. 计算属性 (依赖上方状态) ----------------
+
+// [核心] HTML 解析 computed
+// 负责：1. 过滤时间范围 2. 替换图标 3. 生成进度条HTML
+const parsedHtmlText = computed(() => {
+  if (!state.text) return '示例提示文字'
+  
+  let linesToDisplay: string[] = []
+  const safeText = escapeHtml(state.text)
+  const rawLines = safeText.split('\n')
+
+  // 1. 过滤逻辑
+  if (player.enabled) {
+    rawLines.forEach(line => {
+      // [修复] 正则优化：允许行首空格，支持中英文冒号
+      const match = line.match(/^\s*(\d+)[:：](\d+)/)
+      
+      // 如果行首有时间格式
+      if (match) {
+        const t = parseInt(match[1]) * 60 + parseInt(match[2])
+        // 检查是否在窗口范围内
+        if (t >= player.currentTime - player.windowSize && t <= player.currentTime + player.windowSize) {
+          // 高亮当前秒的行 (可选)
+          if (t === player.currentTime) {
+            linesToDisplay.push(`<span style="color: #3b82f6; font-weight: bold;">${line}</span>`)
+          } else {
+            linesToDisplay.push(line)
+          }
+        }
+      } else {
+        // 没有时间的行，播放模式下可选择不显示，或者根据需求保留
+      }
+    })
+    
+    // 如果没有内容，显示空或者提示
+    if (linesToDisplay.length === 0) {
+      linesToDisplay.push(`<span style="opacity:0.5; font-size: 0.8em">(${formatTime(player.currentTime)}) 等待指令...</span>`)
+    }
+
+    // 2. [新增] 底部进度条 HTML
+    // [修复] 移除HTML中的空格和换行，防止 pre-wrap 导致布局错乱
+    const progressPercent = player.maxTime > 0 ? (player.currentTime / player.maxTime) * 100 : 0
+    const progressBarHtml = `<div style="margin-top:8px;width:100%;height:4px;background:rgba(255,255,255,0.2);border-radius:2px;overflow:hidden;"><div style="width:${progressPercent}%;height:100%;background:#3b82f6;transition:width 0.3s linear;"></div></div><div style="font-size:10px;opacity:0.7;text-align:right;margin-top:2px;">${formatTime(player.currentTime)}</div>`
+    linesToDisplay.push(progressBarHtml)
+
+  } else {
+    // 未开启播放模式，显示所有行
+    linesToDisplay = rawLines
+  }
+
+  // 3. 拼接并替换图标
+  const joinedText = linesToDisplay.join('<br/>') // 使用 BR 换行
+  
+  // 匹配 [tagName] 并替换为 userIcons 中的 base64 图片
+  return joinedText.replace(/\[([a-zA-Z0-9_\-\u4e00-\u9fa5\s]+)\]/g, (match, key) => {
+    const cleanKey = key.trim()
+    const icon = userIcons.value.find(i => i.name === cleanKey)
+    if (icon) {
+      return `<img src="${icon.src}" style="height: 1.2em; vertical-align: text-bottom; margin: 0 1px;" alt="${cleanKey}"/>`
+    }
+    return match
+  })
+})
+
 // 样式（发给预览 + 子窗口）
 const bannerStyle = computed(() => ({
   color: state.colors.text,
@@ -352,13 +437,15 @@ const bannerStyle = computed(() => ({
   letterSpacing: state.style.letterSpacing + 'px',
   lineHeight: String(state.style.lineHeight),
   padding: `${state.style.paddingY}px ${state.style.paddingX}px`,
-  boxShadow: shadowMap[state.style.shadow],
+  boxShadow: shadowMap[state.style.shadow], // 这里安全了，shadowMap 已定义
   whiteSpace: 'pre-wrap' as const, // [修改] 强制换行策略以支持 v-html
   maxWidth: '1200px',
   width: 'fit-content',
+  // [修复] 播放器模式下给一个最小宽度，防止无内容时太窄导致进度条看不清
+  minWidth: player.enabled ? '300px' : '0',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
-  cursor: (state.locked ? 'default' : 'move') as 'default' | 'move', // [修复] TS 类型断言
+  cursor: (state.locked ? 'default' : 'move') as 'default' | 'move',
   pointerEvents: (state.locked ? 'none' : 'auto') as 'none' | 'auto',
 }))
 
@@ -371,6 +458,91 @@ const bannerWrapStyle = computed(() => ({
   justifyContent: state.layout.width === 'full' ? 'stretch' : 'center',
 }))
 
+// ---------------- 4. 业务逻辑函数 ----------------
+
+// 播放控制
+function togglePlay() {
+  if (player.isPlaying) {
+    stopTimer()
+  } else {
+    player.enabled = true
+    player.isPlaying = true
+    player.timer = setInterval(() => {
+      if (player.currentTime >= player.maxTime) {
+        stopPlay()
+      } else {
+        player.currentTime++
+      }
+    }, 1000)
+  }
+}
+
+function stopPlay() {
+  stopTimer()
+  player.currentTime = 0
+}
+
+function stopTimer() {
+  player.isPlaying = false
+  if (player.timer) {
+    clearInterval(player.timer)
+    player.timer = null
+  }
+}
+
+function onSeek() {
+  if (player.isPlaying) {
+    stopTimer()
+    togglePlay() 
+  }
+}
+
+// 图标管理
+function openIconModal() { showIconModal.value = true }
+function triggerFileUpload() { fileInputRef.value?.click() }
+
+async function handleFileUpload(event: Event) {
+  const target = event.target as HTMLInputElement
+  const files = target.files
+  if (!files || files.length === 0) return
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i]
+    let safeName = file.name.split('.')[0].toLowerCase().replace(/\s+/g, '_')
+    let counter = 1; let tempName = safeName
+    while (userIcons.value.some(icon => icon.name === tempName)) { tempName = `${safeName}_${counter}`; counter++ }
+    const base64 = await toBase64(file)
+    userIcons.value.push({ name: tempName, src: base64 as string })
+  }
+  saveIconsToStorage()
+  target.value = ''
+}
+
+function deleteIcon(index: number) {
+  if (confirm('确定删除?')) { userIcons.value.splice(index, 1); saveIconsToStorage() }
+}
+
+function saveIconsToStorage() {
+  try { localStorage.setItem(ICONS_STORE_KEY, JSON.stringify(userIcons.value)) } catch (e) { alert('存储空间不足'); }
+}
+function loadIconsFromStorage() {
+  const raw = localStorage.getItem(ICONS_STORE_KEY)
+  if (raw) { try { userIcons.value = JSON.parse(raw) } catch (e) { console.error(e) } }
+}
+
+function updateCursorPos() {
+  if (textareaRef.value) cursorPosition.value = textareaRef.value.selectionStart
+}
+
+function insertIcon(tagName: string) {
+  const insertText = `[${tagName}]`
+  const originalText = state.text || ''
+  const p = cursorPosition.value
+  state.text = originalText.slice(0, p) + insertText + originalText.slice(p)
+  cursorPosition.value += insertText.length
+  showIconModal.value = false
+  setTimeout(() => { textareaRef.value?.focus(); textareaRef.value?.setSelectionRange(cursorPosition.value, cursorPosition.value) }, 100)
+}
+
 async function toggleLock() {
   state.locked = !state.locked
   await updateLockState()
@@ -379,7 +551,6 @@ async function toggleLock() {
 
 async function updateLockState() {
   if (!bannerWin) return
-  // true = 忽略鼠标（穿透/锁定），false = 捕获鼠标（不穿透/可拖动）
   await bannerWin.setIgnoreCursorEvents(state.locked)
   if (!state.locked) {
     await bannerWin.setFocus() // 解锁时聚焦，方便操作
@@ -388,7 +559,8 @@ async function updateLockState() {
 
 function emitUpdate() {
   emit('screen-banner:update', {
-    text: parsedHtmlText.value, // [修改] 发送解析后的 HTML
+    text: parsedHtmlText.value, // 发送 HTML
+    isHtml: true,               // 标记
     style: bannerStyle.value,
     layout: {
       zIndex: state.layout.zIndex,
@@ -410,7 +582,7 @@ function emitUpdate() {
   console.log('emitUpdate')
 }
 
-// ---------------- 窗口管理 ----------------
+// ---------------- 5. 窗口管理 & 生命周期 ----------------
 async function openBannerWindow() {
   if (bannerWin) {
     try {
@@ -423,8 +595,6 @@ async function openBannerWindow() {
 
   bannerWin = new WebviewWindow(BANNER_LABEL, {
     url: '/floating-banner',
-    // width: state.window.width,
-    // height: state.window.height,
     width: 400,
     height: 100,
     x: 0,
@@ -440,7 +610,6 @@ async function openBannerWindow() {
   bannerWin.once('tauri://created', async () => {
     try {
       await updateLockState()
-      // await bannerWin?.setIgnoreCursorEvents(true)
     } catch (e) {
       console.warn('setIgnoreCursorEvents failed', e)
     }
@@ -450,7 +619,6 @@ async function openBannerWindow() {
     bannerWin = null
     state.show = false
   })
-
 }
 
 async function closeBannerWindow() {
@@ -466,21 +634,16 @@ async function closeBannerWindow() {
 
 async function toggleShow() {
   state.show = !state.show
-
   if (state.show) {
     saveToLocal()
     await openBannerWindow()
-    // 打开后立刻发一次当前状态
-      setTimeout(() => {
-        emitUpdate()
-    }, 1000) 
+    setTimeout(() => { emitUpdate() }, 1000) 
   } else {
     await closeBannerWindow()
-
   }
 }
 
-// 窗口尺寸变化时，同步给子窗口（如果已存在）
+// [恢复] 窗口尺寸变化时，同步给子窗口（如果已存在）
 // watch(
 //   () => [state.window.width, state.window.height],
 //   ([w, h]) => {
@@ -491,28 +654,9 @@ async function toggleShow() {
 //   }
 // )
 
-// ---------------- 工具 ----------------
-const shadowMap: Record<string, string> = {
-  none: 'none',
-  sm: '0 1px 2px rgba(0,0,0,.25)',
-  md: '0 6px 16px rgba(0,0,0,.35)',
-  lg: '0 14px 28px rgba(0,0,0,.45)'
-}
-
-function hexToRgba(hex: string, a: number) {
-  const m = hex.replace('#','')
-  const full = m.length === 3 ? m.split('').map(ch => ch + ch).join('') : m
-  const bigint = parseInt(full, 16)
-  const r = (bigint >> 16) & 255
-  const g = (bigint >> 8) & 255
-  const b = bigint & 255
-  return `rgba(${r}, ${g}, ${b}, ${a})`
-}
-
 function reset() {
   state.text = ''
   state.font.size = 28
-  state.font.family = "Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial"
   state.font.weight = 700
   state.colors.text = '#ffffff'
   state.colors.bg = '#111827'
@@ -530,12 +674,10 @@ function reset() {
   state.behavior.blinkEnabled = true
   state.behavior.blinkAfter = 180
   state.behavior.blinkDuration = 30
-  state.locked = true // [新增]
-  updateLockState()   // [新增]
+  state.locked = true 
+  updateLockState()   
 }
 
-// 持久化（localStorage）
-const STORE_KEY = 'screen-reminder-v1'
 function saveToLocal() {
   localStorage.setItem(STORE_KEY, JSON.stringify(state))
 }
@@ -545,7 +687,6 @@ function loadFromLocal() {
     const raw = localStorage.getItem(STORE_KEY)
     if (raw) {
       const parsed = JSON.parse(raw)
-      // 逐个属性合并，防止整个 state 代理对象被破坏
       if (parsed.text !== undefined) state.text = parsed.text
       if (parsed.font) Object.assign(state.font, parsed.font)
       if (parsed.colors) Object.assign(state.colors, parsed.colors)
@@ -553,7 +694,6 @@ function loadFromLocal() {
       if (parsed.layout) Object.assign(state.layout, parsed.layout)
       if (parsed.window) Object.assign(state.window, parsed.window)
       if (parsed.behavior) Object.assign(state.behavior, parsed.behavior)
-      // 恢复 show 状态为 false，防止一打开APP就自动弹窗（如果这是你期望的）
       state.show = false 
     }
   } catch (e) {
@@ -561,10 +701,8 @@ function loadFromLocal() {
   }
 }
 
-// 快捷键（窗口内）
 function onKey(e: KeyboardEvent) {
   if (!e.ctrlKey || !e.shiftKey) {
-    // 单独按 ` 时，在当前窗口也重置闪烁时间
     if (e.code === 'Backquote') {
       emit('screen-banner:resetBlink')
     }
@@ -576,13 +714,12 @@ function onKey(e: KeyboardEvent) {
   if (e.code === 'KeyC') { e.preventDefault(); navigator.clipboard.writeText(state.text || '') }
 }
 
-// 生命周期
 onMounted(async () => {
   loadFromLocal()
-  loadIconsFromStorage() // [新增] 加载自定义图标
+  loadIconsFromStorage() // 加载自定义图标
   window.addEventListener('keydown', onKey)
 
-  // 全局快捷键：在 Windows 任意界面按 `，重置闪烁倒计时
+  // [恢复] 全局快捷键：在 Windows 任意界面按 `，重置闪烁倒计时
   // try {
   //   await registerShortcut('`', (event) => {
   //     console.log('global ` pressed in floating window')
@@ -598,30 +735,36 @@ onMounted(async () => {
     console.log('Floating banner is ready, syncing state...')
     emitUpdate()
   })
-
 })
 
 onUnmounted(() => {
+  stopTimer() // 清理定时器
   window.removeEventListener('keydown', onKey)
   unregisterAll().catch(() => {})
 })
 
-// 自动保存 + 同步到子窗口
-watch(
-  state,
-  () => {
-    saveToLocal()
-    emitUpdate()
-  },
-  { deep: true }
-)
+// Watchers
+watch(state, () => { saveToLocal(); emitUpdate() }, { deep: true })
+// 监听文本变化自动更新最大时间
+watch(() => state.text, (newText) => {
+  const lines = newText.split('\n')
+  let max = 0
+  lines.forEach(line => {
+    const match = line.match(/^(\d+):(\d+)/)
+    if (match) {
+      const t = parseInt(match[1]) * 60 + parseInt(match[2])
+      if (t > max) max = t
+    }
+  })
+  if (max > 0) player.maxTime = max + 10 
+})
+watch(() => player.currentTime, () => emitUpdate())
+watch(() => player.enabled, () => emitUpdate())
 </script>
 
 <style scoped>
 .page { display: flex; flex-direction: column; height: 100%; color: #e5e7eb; background: #0f1113; }
 .toolbar h1 { font-size: 18px; font-weight: 700; }
-.spacer { flex: 1; }
-.title{ font-size:18px; margin:4px 4px; font-weight:700; }
 .content {
   display:grid;
   grid-template-columns: 420px 1fr;
@@ -669,10 +812,29 @@ watch(
 .preview { border: 1px dashed #2a2f36; border-radius: 12px; padding: 10px; background: #0f1113; }
 .banner { width: 100%; text-align: left; border-radius: 10px; }
 
-/* 悬浮条容器（如果以后用 teleport） */
+/* 悬浮条容器 */
 .floating-banner { position: fixed; top: 0; left: 0; right: 0; }
 
 code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+/* ---------------- [新增] 播放器样式 ---------------- */
+.player-control-panel {
+  background: #1f242d;
+  border: 1px solid #374151;
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+.player-header { display: flex; justify-content: space-between; margin-bottom: 8px; }
+.time-display { font-family: monospace; font-size: 14px; color: #3b82f6; }
+.player-controls { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.btn-icon { background: none; border: 1px solid #374151; color: #e5e7eb; border-radius: 4px; width: 32px; height: 32px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.btn-icon:hover { background: #374151; }
+.progress-slider { flex: 1; }
+.player-settings { margin-top: 8px; }
+.sub-label { font-size: 11px; color: #6b7280; display: block; margin-bottom: 2px; }
+.input-sm { width: 60px; padding: 4px; font-size: 12px; background: #111827; border: 1px solid #374151; border-radius: 4px; color: white; }
+.checkbox-label { font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
 
 /* ---------------- [新增] 模态框样式 ---------------- */
 .btn-xs {
