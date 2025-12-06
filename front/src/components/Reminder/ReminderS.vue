@@ -68,7 +68,7 @@
           @keyup="updateCursorPos"
         />
 
-        <!-- 样式设置区 -->
+        <!-- 样式设置 -->
         <div class="grid-2">
           <div>
             <label class="label">字体</label>
@@ -136,101 +136,35 @@
             </select>
           </div>
         </div>
-
-        <!-- 
-        <div class="grid-3" style="margin-top: 12px;">
-          <div>
-            <label class="label">窗口宽度（px）</label>
-            <input class="input" type="number" min="400" max="9999" v-model.number="state.window.width" />
-          </div>
-          <div>
-            <label class="label">窗口高度（px）</label>
-            <input class="input" type="number" min="40" max="600" v-model.number="state.window.height" />
-          </div>
-          <div>
-            <label class="label">宽度模式</label>
-            <select v-model="state.layout.width" class="input">
-              <option value="full">全宽</option>
-              <option value="center">居中（最大 960px）</option>
-            </select>
-          </div>
-        </div> -->
-
-        <!-- <div class="grid-3" style="margin-top: 12px;">
-          <div>
-            <label class="label">层级 z-index</label>
-            <input class="input" type="number" v-model.number="state.layout.zIndex" min="10" max="999999" />
-          </div>
-          <div>
-            <label class="label">交互</label>
-            <select v-model="state.layout.pointer" class="input">
-              <option value="auto">可点击</option>
-              <option value="none">穿透（不拦截鼠标）</option>
-            </select>
-          </div>
-          <div>
-            <label class="label">启用 N 秒后闪烁</label>
-            <select v-model="state.behavior.blinkEnabled" class="input">
-              <option :value="true">启用</option>
-              <option :value="false">禁用</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="grid-3" style="margin-top: 12px;">
-          <div>
-            <label class="label">N 秒后开始闪烁：{{ state.behavior.blinkAfter }} s</label>
-            <input class="range" type="range" min="10" max="600" step="5" v-model.number="state.behavior.blinkAfter" />
-          </div>
-          <div>
-            <label class="label">（可选）闪烁持续秒数：{{ state.behavior.blinkDuration }} s</label>
-            <input class="range" type="range" min="5" max="120" step="5" v-model.number="state.behavior.blinkDuration" />
-          </div>
-          <div style="display:flex;align-items:flex-end;">
-            <span class="label">
-              全局快捷键：
-              <code>`</code> 重置闪烁倒计时
-            </span>
-          </div>
-        </div> -->
-
-        <!-- <div class="tips">
-          快捷键：
-          <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> 显示/隐藏；
-          <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑/↓</kbd> 调整字号；
-          <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> 复制当前文字；
-          <code>`</code>（全局）重置即将闪烁的时间。
-        </div> -->
         
           <div style="margin-top: 20px; font-size: 12px; color: #666; line-height: 1.5;">
             提示：<br/>
             1. 只有点击上方 <b>"解锁位置"</b> 后，悬浮窗才可以被鼠标选中并拖动。<br/>
-            2. 勾选 <b>"启用播放模式"</b> 后，悬浮窗底部会出现进度条和控制按钮。<br/>
-            3. <b>注意：</b>当悬浮窗处于<b>锁定</b>状态时，无法点击进度条（鼠标穿透）。如需操作，请先解锁或使用主界面控制。
+            2. 勾选 <b>"启用播放模式"</b> 后，悬浮窗将变为动态播放器样式。<br/>
+            3. 只有当前时间前后 {{ player.windowSize }} 秒内的行会被显示。<br/>
+            4. 使用 <code>[标签名]</code> 插入图标，标签名在弹窗中可修改。
          </div>
       </section>
 
       <section class="right">
         <div class="preview-title">预览 (所见即所得)</div>
         <div class="preview">
-          <div class="banner" :style="bannerStyle">
-            <div v-html="parsedHtmlText"></div>
-            <!-- 预览区显示模拟进度条 -->
-            <div v-if="player.enabled" class="preview-controls" style="margin-top:8px; border-top:1px solid rgba(255,255,255,0.1); padding-top:4px;">
-               <div style="display:flex; gap:4px; align-items:center;">
-                 <div style="font-size:12px;">⏸</div>
-                 <div style="flex:1; height:4px; background:rgba(255,255,255,0.2); border-radius:2px;">
-                   <div :style="{ width: (player.maxTime > 0 ? (player.currentTime / player.maxTime) * 100 : 0) + '%', height: '100%', background: '#3b82f6' }"></div>
-                 </div>
-                 <div style="font-size:10px; opacity:0.7;">{{ formatTime(player.currentTime) }}</div>
-               </div>
-            </div>
+          <div class="banner" :style="bannerStyle" v-html="parsedHtmlText"></div>
+          <!-- 预览进度条 -->
+          <div v-if="player.enabled" style="margin-top:8px; padding:6px; background:rgba(0,0,0,0.5); border-radius:4px; border:1px dashed #666;">
+             <div style="font-size:10px; color:#aaa; margin-bottom:4px;">(悬浮窗控制条)</div>
+             <div style="width:100%;height:4px;background:rgba(255,255,255,0.2);border-radius:2px;">
+               <div :style="{ width: (player.maxTime > 0 ? (player.currentTime / player.maxTime) * 100 : 0) + '%', height: '100%', background: '#3b82f6', transition: 'width 0.3s linear' }"></div>
+             </div>
+             <div style="font-size:10px;opacity:0.7;text-align:right;margin-top:2px;">
+               <span>🔒</span> {{ formatTime(player.currentTime) }}
+             </div>
           </div>
         </div>
       </section>
     </div>
 
-    <!-- 图标管理模态框 -->
+    <!-- 图标模态框 -->
     <div v-if="showIconModal" class="modal-overlay" @click.self="showIconModal = false">
       <div class="modal-content">
         <div class="modal-header">
@@ -269,7 +203,7 @@ import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { listen, emit } from '@tauri-apps/api/event'
 import { register as registerShortcut, unregisterAll } from '@tauri-apps/plugin-global-shortcut'
 
-// 1. 工具函数
+// 工具函数
 const shadowMap: Record<string, string> = { none: 'none', sm: '0 1px 2px rgba(0,0,0,.25)', md: '0 6px 16px rgba(0,0,0,.35)', lg: '0 14px 28px rgba(0,0,0,.45)' }
 function hexToRgba(hex: string, a: number) { const m = hex.replace('#',''); const full = m.length === 3 ? m.split('').map(ch => ch + ch).join('') : m; const bigint = parseInt(full, 16); const r = (bigint >> 16) & 255; const g = (bigint >> 8) & 255; const b = bigint & 255; return `rgba(${r}, ${g}, ${b}, ${a})` }
 function formatTime(s: number) { const m = Math.floor(s / 60); const sec = Math.floor(s % 60); return `${m}:${sec.toString().padStart(2, '0')}` }
@@ -277,7 +211,7 @@ function escapeHtml(t: string) { return t.replace(/&/g, "&amp;").replace(/</g, "
 function toBase64(file: File) { return new Promise((res, rej) => { const r = new FileReader(); r.readAsDataURL(file); r.onload = () => res(r.result); r.onerror = rej }) }
 const STORE_KEY = 'screen-reminder-v1'; const ICONS_STORE_KEY = 'user-custom-icons';
 
-// 2. 状态定义
+// 状态
 const player = reactive({ enabled: false, isPlaying: false, currentTime: 0, maxTime: 600, windowSize: 5, timer: null as any })
 const state = reactive({
   text: '', show: false, locked: true,
@@ -299,8 +233,7 @@ const cursorPosition = ref(0)
 const BANNER_LABEL = 'screen-banner'
 let bannerWin: WebviewWindow | null = null
 
-// 3. 核心计算
-// 只负责解析文本，不生成进度条HTML (进度条由悬浮窗组件自己生成)
+// 计算属性
 const parsedHtmlText = computed(() => {
   if (!state.text) return '示例提示文字'
   let linesToDisplay: string[] = []
@@ -342,14 +275,14 @@ const bannerStyle = computed(() => ({
   whiteSpace: 'pre-wrap' as const,
   maxWidth: '1200px',
   width: 'fit-content',
-  minWidth: player.enabled ? '300px' : '0', // 播放模式下保证最小宽度
+  minWidth: player.enabled ? '300px' : '0',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   cursor: (state.locked ? 'default' : 'move') as 'default' | 'move',
   pointerEvents: (state.locked ? 'none' : 'auto') as 'none' | 'auto',
 }))
 
-// 4. 事件发送
+// 通信
 function emitUpdate() {
   emit('screen-banner:update', {
     text: parsedHtmlText.value,
@@ -366,7 +299,7 @@ function emitUpdate() {
   })
 }
 
-// 5. 播放逻辑
+// 播放逻辑
 function togglePlay() {
   if (player.isPlaying) stopTimer()
   else {
@@ -381,7 +314,7 @@ function stopPlay() { stopTimer(); player.currentTime = 0 }
 function stopTimer() { player.isPlaying = false; if (player.timer) { clearInterval(player.timer); player.timer = null } }
 function onSeek() { if (player.isPlaying) { stopTimer(); togglePlay() } }
 
-// 6. 窗口管理
+// 窗口管理
 async function openBannerWindow() {
   if (bannerWin) { try { await bannerWin.show(); return } catch { bannerWin = null } }
   bannerWin = new WebviewWindow(BANNER_LABEL, {
@@ -397,10 +330,10 @@ async function toggleShow() { state.show = !state.show; if (state.show) { saveTo
 async function toggleLock() { state.locked = !state.locked; await updateLockState(); emitUpdate() }
 async function updateLockState() { if (!bannerWin) return; await bannerWin.setIgnoreCursorEvents(state.locked); if (!state.locked) await bannerWin.setFocus() }
 
-// 7. 其他辅助
+// 其他功能
 function openIconModal() { showIconModal.value = true }
 function triggerFileUpload() { fileInputRef.value?.click() }
-async function handleFileUpload(e: Event) { /* ...同前... */ 
+async function handleFileUpload(e: Event) { 
   const target = e.target as HTMLInputElement; const files = target.files; if(!files) return
   for(let i=0; i<files.length; i++) {
     const f = files[i]; let n = f.name.split('.')[0].toLowerCase().replace(/\s+/g,'_')
@@ -413,7 +346,7 @@ function deleteIcon(i: number) { if(confirm('Del?')) { userIcons.value.splice(i,
 function saveIconsToStorage() { localStorage.setItem(ICONS_STORE_KEY, JSON.stringify(userIcons.value)) }
 function loadIconsFromStorage() { const r = localStorage.getItem(ICONS_STORE_KEY); if(r) userIcons.value = JSON.parse(r) }
 function updateCursorPos() { if (textareaRef.value) cursorPosition.value = textareaRef.value.selectionStart }
-function insertIcon(tag: string) { /* ...同前... */ 
+function insertIcon(tag: string) { 
   const ins = `[${tag}]`; const val = state.text; const p = cursorPosition.value
   state.text = val.slice(0,p) + ins + val.slice(p); cursorPosition.value += ins.length
   showIconModal.value=false
@@ -439,9 +372,12 @@ function onKey(e: KeyboardEvent) {
 onMounted(async () => {
   loadFromLocal(); loadIconsFromStorage(); window.addEventListener('keydown', onKey)
   await listen('screen-banner:ready', () => emitUpdate())
+  
+  // [新增] 监听 toggle-lock 事件
   await listen('screen-banner:control', (e: any) => {
     if (e.payload.type === 'toggle') togglePlay()
     if (e.payload.type === 'seek') { player.currentTime = e.payload.value; onSeek() }
+    if (e.payload.type === 'toggle-lock') toggleLock()
   })
 })
 onUnmounted(() => { stopTimer(); window.removeEventListener('keydown', onKey) })
@@ -458,7 +394,6 @@ watch(() => player.isPlaying, emitUpdate)
 </script>
 
 <style scoped>
-/* 保持所有样式 */
 .page { display: flex; flex-direction: column; height: 100%; color: #e5e7eb; background: #0f1113; }
 .toolbar h1 { font-size: 18px; font-weight: 700; }
 .content { display:grid; grid-template-columns: 420px 1fr; gap:16px; padding:16px 20px; height: calc(100vh - 50px); margin-top: 50px; box-sizing:border-box; overflow:hidden; }
