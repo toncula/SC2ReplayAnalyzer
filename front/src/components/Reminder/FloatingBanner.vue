@@ -4,8 +4,34 @@
     class="banner-container" 
     :style="containerStyle"
     data-tauri-drag-region
-    v-html="text || '示例提示文字'"
   >
+    <!-- 内容区域 -->
+    <div v-html="text || '示例提示文字'"></div>
+
+    <!-- [新增] 交互式播放控制 -->
+    <div v-if="player && player.enabled" class="floating-controls">
+      <div class="progress-bar-wrapper">
+        <!-- 进度条滑块 -->
+        <input 
+          type="range" 
+          class="mini-slider" 
+          min="0" 
+          :max="player.maxTime" 
+          step="1"
+          :value="player.currentTime"
+          @input="onSeek"
+          @mousedown.stop 
+        />
+      </div>
+      <div class="controls-row">
+        <!-- 播放/暂停按钮 -->
+        <button class="mini-btn" @click.stop="togglePlay">
+          {{ player.isPlaying ? '⏸' : '▶️' }}
+        </button>
+        <!-- 时间显示 -->
+        <span class="mini-time">{{ formatTime(player.currentTime) }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -18,18 +44,34 @@ import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 const text = ref('')
 const containerStyle = ref<Record<string, any>>({})
 const containerRef = ref<HTMLElement | null>(null)
+const player = ref<any>(null) // 存储播放器状态
 
 let unlisten: (() => void) | null = null
 let resizeObserver: ResizeObserver | null = null
 
-// 窗口尺寸自适应
+function formatTime(seconds: number) {
+  const m = Math.floor(seconds / 60)
+  const s = Math.floor(seconds % 60)
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+function onSeek(e: Event) {
+  const target = e.target as HTMLInputElement
+  const val = parseInt(target.value)
+  // 发送 seek 请求给主窗口
+  emit('screen-banner:control', { type: 'seek', value: val })
+}
+
+function togglePlay() {
+  emit('screen-banner:control', { type: 'toggle' })
+}
+
 const updateWindowSize = async () => {
   await nextTick()
   const el = containerRef.value
   if (!el) return
 
   // 获取实际渲染宽度
-  // +2 防止某些 DPI 下边缘裁切
   const width = el.offsetWidth + 2
   const height = el.offsetHeight + 2
 
@@ -40,7 +82,6 @@ const updateWindowSize = async () => {
 onMounted(async () => {
   const appWindow = getCurrentWindow()
 
-  // 监听主窗口发来的更新事件
   unlisten = await listen('screen-banner:update', async (event) => {
     const payload = event.payload as { 
       text: string; 
@@ -50,43 +91,41 @@ onMounted(async () => {
     }
     
     text.value = payload.text
+    // 获取播放器状态
+    if (payload.behavior && payload.behavior.player) {
+      player.value = payload.behavior.player
+    } else {
+      player.value = null
+    }
     
-    // 合并样式
     containerStyle.value = {
-      ...payload.style, // 继承主窗口发来的基础样式 (字体、颜色、背景等)
+      ...payload.style, // 继承主窗口发来的基础样式
 
-      // --- 悬浮窗强制样式覆盖 ---
-      
       width: 'fit-content', 
       height: 'fit-content',
       maxWidth: '1200px',
       margin: '0',
       
-      // 1. 布局修复：
-      // 主窗口为了垂直居中使用了 flex，但在悬浮窗中，
-      // 我们需要 block 布局让“进度条 div”自动换行到文字下方。
+      // 强制 Block 布局以支持图文混排 + 底部控件栏
       display: 'block', 
       alignItems: 'unset',
       justifyContent: 'unset',
 
-      // 2. 文本换行修复：
-      // 保证长文本和 HTML 内容能正确换行
       whiteSpace: 'pre-wrap', 
       
-      // 3. 交互设置：
+      // 关键：如果锁定，悬浮窗整体鼠标穿透。
+      // 这意味着用户将无法点击进度条，这是系统限制。
+      // 用户必须解锁才能操作进度条。
       pointerEvents: payload.locked ? 'none' : 'auto'
     }
     
-    // 处理鼠标穿透状态
     await appWindow.setIgnoreCursorEvents(payload.locked)
     
-    // 如果解锁了，聚焦窗口以便接收键盘事件（如果有的话）
     if (!payload.locked) {
       await appWindow.setFocus()
     }
   })
 
-  // 监听内容尺寸变化，自动调整窗口大小
   if (containerRef.value) {
     resizeObserver = new ResizeObserver(() => {
       updateWindowSize()
@@ -94,7 +133,6 @@ onMounted(async () => {
     resizeObserver.observe(containerRef.value)
   }
 
-  // 通知主窗口：悬浮窗已就绪
   await emit('screen-banner:ready')
 })
 
@@ -105,7 +143,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style>
-/* 确保背景透明，无边距 */
 :global(body) {
   margin: 0;
   padding: 0;
@@ -120,6 +157,68 @@ onBeforeUnmount(() => {
   user-select: none; 
   cursor: default;
   min-width: 0;
-  /* 这里的样式会被 containerStyle 覆盖，主要作为兜底 */
+  position: relative; 
+}
+
+/* 播放器控件样式 */
+.floating-controls {
+  margin-top: 8px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* 尝试在解锁状态下允许交互 */
+  pointer-events: auto; 
+}
+
+.progress-bar-wrapper {
+  width: 100%;
+  height: 10px;
+  display: flex;
+  align-items: center;
+}
+
+.mini-slider {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+.mini-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #3b82f6;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+.mini-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.controls-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.mini-btn {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 4px;
+}
+.mini-btn:hover {
+  color: white;
+  transform: scale(1.1);
 }
 </style>
